@@ -6,7 +6,7 @@ COPY src/app/__init__.py src/app/
 RUN ["uv", "sync"] 
 
 FROM base AS development
-RUN apt update && apt install -y  --no-install-recommends git
+RUN apt update && apt install -y  --no-install-recommends git openssh-client
 COPY . .
 EXPOSE 8000
 CMD [ "uv", "run", "fastapi", "dev", "--host", "0.0.0.0"]
