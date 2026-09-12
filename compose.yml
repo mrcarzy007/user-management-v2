@@ -1,0 +1,43 @@
+services:
+    app:
+        build:
+            context: .
+            target: development
+        image: user-management
+        ports:
+            - 8000:8000
+        volumes:
+            - .:/app
+            - /app/.venv
+        depends_on:
+            postgres:
+                condition: service_healthy
+
+    postgres:
+        image: postgres:18-alpine
+        environment:
+            POSTGRES_USER: postgres
+            POSTGRES_PASSWORD: postgres
+            POSTGRES_DB: user-management
+        volumes:
+            - postgres_db:/var/lib/postgresql
+        healthcheck:
+            test: ["CMD-SHELL", "pg_isready -U postgres"]
+            start_period: 5s
+            interval: 5s
+            timeout: 5s
+            retries: 3
+    
+    dbmate:
+        image: amacneil/dbmate
+        volumes:
+            - ./migrations:/db/migrations
+        env_file:
+            - .env
+        depends_on:
+            postgres:
+                condition: service_healthy
+
+        
+volumes:
+    postgres_db:
