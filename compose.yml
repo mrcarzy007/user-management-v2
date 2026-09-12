@@ -3,7 +3,6 @@ services:
         build:
             context: .
             target: development
-        image: user-management
         ports:
             - 8000:8000
         volumes:
@@ -18,7 +17,7 @@ services:
         environment:
             POSTGRES_USER: postgres
             POSTGRES_PASSWORD: postgres
-            POSTGRES_DB: user-management
+            POSTGRES_DB: postgres
         volumes:
             - postgres_db:/var/lib/postgresql
         healthcheck:
