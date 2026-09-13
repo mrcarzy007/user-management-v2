@@ -1,0 +1,29 @@
+from psycopg.rows import class_row
+from psycopg_pool import AsyncConnectionPool
+
+from app.models.user import User
+
+
+class UserRepository:
+    def __init__(self, pool: AsyncConnectionPool):
+        self.pool = pool
+
+    async def create(self, email: str, hashed_password: str):
+        async with (
+            self.pool.connection() as conn,
+            conn.cursor(row_factory=class_row(User)) as curr,
+        ):
+            await curr.execute(
+                t"""
+                    INSERT INTO users (email,hashed_password,is_active,is_verified) 
+                    VALUES ({email}, {hashed_password}, {False}, {False})
+                    RETURNING *
+                """
+            )
+
+            created_user = await curr.fetchone()
+
+            if created_user is None:
+                raise RuntimeError("UserRepository: Failed to create user")
+
+            return created_user

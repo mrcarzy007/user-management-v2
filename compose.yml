@@ -27,16 +27,5 @@ services:
             timeout: 5s
             retries: 3
     
-    dbmate:
-        image: amacneil/dbmate
-        volumes:
-            - ./migrations:/db/migrations
-        env_file:
-            - .env
-        depends_on:
-            postgres:
-                condition: service_healthy
-
-        
 volumes:
     postgres_db:

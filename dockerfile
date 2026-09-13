@@ -6,7 +6,9 @@ COPY src/app/__init__.py src/app/
 RUN ["uv", "sync"] 
 
 FROM base AS development
-RUN apt update && apt install -y  --no-install-recommends git openssh-client
+RUN apt update && apt install -y  --no-install-recommends git openssh-client curl
+RUN curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/latest/download/dbmate-linux-amd64
+RUN chmod +x /usr/local/bin/dbmate
 COPY . .
 EXPOSE 8000
 CMD [ "uv", "run", "fastapi", "dev", "--host", "0.0.0.0"]
