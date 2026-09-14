@@ -34,7 +34,9 @@ async def db_pool(test_db: str):
 
 
 @pytest.fixture(scope="function")
-async def client():
+async def client(db_pool: AsyncConnectionPool):
+    async with db_pool.connection() as conn:
+        await conn.execute("TRUNCATE TABLE users RESTART IDENTITY CASCADE;")
 
     transport = ASGITransport(app)
 

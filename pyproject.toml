@@ -15,6 +15,7 @@ dependencies = [
     "pwdlib[argon2]>=0.3.1",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
+    "pyjwt>=2.14.0",
 ]
 
 
@@ -31,6 +32,10 @@ module-name = "app"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
+testpaths = ["tests"]
+
+[tool.mypy]
+plugins = ["pydantic.mypy"]
 
 [dependency-groups]
 dev = [

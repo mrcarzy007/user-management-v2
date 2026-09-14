@@ -2,9 +2,14 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
 
-from app.dependencies import get_user_service
-from app.models.user import User, UserCreate, UserResponse
-from app.services.user import UserService
+from app.dependencies import get_auth_service
+from app.models.auth import (
+    AuthRegister,
+    AuthRegisterResponse,
+    AuthToken,
+    AuthTokenResponse,
+)
+from app.services.auth import AuthService
 
 router = APIRouter(
     prefix="/auth",
@@ -13,16 +18,23 @@ router = APIRouter(
 
 
 @router.post(
-    "/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED
+    "/register",
+    response_model=AuthRegisterResponse,
+    status_code=status.HTTP_201_CREATED,
 )
 async def register(
-    data: UserCreate, user_service: Annotated[UserService, Depends(get_user_service)]
-) -> User:
-    return await user_service.create(data)
+    data: AuthRegister,
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+):
+    return await auth_service.register(data)
 
 
-@router.post("/token")
-def token(): ...
+@router.post("/token", response_model=AuthTokenResponse, status_code=status.HTTP_200_OK)
+async def token(
+    data: AuthToken,
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+):
+    return await auth_service.token(data)
 
 
 @router.post("/refresh")

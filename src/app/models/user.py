@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
-from pydantic import BaseModel, EmailStr
+
+from pydantic import BaseModel
 
 
 @dataclass
@@ -12,11 +13,6 @@ class User:
     is_verified: bool
     created_at: datetime
     updated_at: datetime
-
-
-class UserCreate(BaseModel):
-    email: EmailStr
-    password: str
 
 
 class UserResponse(BaseModel):

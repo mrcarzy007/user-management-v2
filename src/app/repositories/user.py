@@ -11,9 +11,9 @@ class UserRepository:
     async def create(self, email: str, hashed_password: str):
         async with (
             self.pool.connection() as conn,
-            conn.cursor(row_factory=class_row(User)) as curr,
+            conn.cursor(row_factory=class_row(User)) as cur,
         ):
-            await curr.execute(
+            await cur.execute(
                 t"""
                     INSERT INTO users (email,hashed_password,is_active,is_verified) 
                     VALUES ({email}, {hashed_password}, {False}, {False})
@@ -21,9 +21,24 @@ class UserRepository:
                 """
             )
 
-            created_user = await curr.fetchone()
+            created_user = await cur.fetchone()
 
             if created_user is None:
                 raise RuntimeError("UserRepository: Failed to create user")
 
             return created_user
+
+    async def get_by_email(self, email: str) -> User | None:
+        async with (
+            self.pool.connection() as conn,
+            conn.cursor(row_factory=class_row(User)) as cur,
+        ):
+            await cur.execute(
+                t"""
+                    SELECT * FROM users WHERE email = LOWER({email})
+                """
+            )
+
+            user = await cur.fetchone()
+
+            return user
