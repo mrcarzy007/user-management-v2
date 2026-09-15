@@ -5,6 +5,8 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.repositories.session import SessionRepository
 from app.repositories.user import UserRepository
+from app.services.session import SessionService
+from app.services.user import UserService
 
 
 def get_db_pool(req: Request) -> AsyncConnectionPool:
@@ -16,13 +18,13 @@ def get_db_pool(req: Request) -> AsyncConnectionPool:
     return pool
 
 
-def get_user_repo(
+def get_user_service(
     pool: Annotated[AsyncConnectionPool, Depends(get_db_pool)],
-) -> UserRepository:
-    return UserRepository(pool=pool)
+) -> UserService:
+    return UserService(user_repo=UserRepository(pool=pool))
 
 
-def get_session_repo(
+def get_session_service(
     pool: Annotated[AsyncConnectionPool, Depends(get_db_pool)],
-) -> SessionRepository:
-    return SessionRepository(pool=pool)
+) -> SessionService:
+    return SessionService(session_repo=SessionRepository(pool=pool))

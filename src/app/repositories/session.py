@@ -1,10 +1,9 @@
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 
 from psycopg.rows import class_row
 from psycopg_pool import AsyncConnectionPool
 
-from app.core.security import generate_refresh_token
-from app.core.settings import settings
+from app.core.exceptions import InvalidTokenError
 from app.models.session import Session
 
 
@@ -15,15 +14,12 @@ class SessionRepository:
     async def create(
         self,
         user_id: int,
+        token_hash: str,
+        expires_at: datetime,
         name: str | None,
         device_info: str | None,
         ip_address: str | None,
     ):
-        raw_refresh_token, refresh_token_hash = generate_refresh_token()
-
-        expires_at = datetime.now(tz=UTC) + timedelta(
-            minutes=settings.REFRESH_TOKEN_EXPIRE_MINUTES
-        )
 
         async with (
             self.pool.connection() as conn,
@@ -32,7 +28,7 @@ class SessionRepository:
             await cur.execute(
                 t"""
                     INSERT INTO refresh_tokens ( name, user_id, token_hash, expires_at, device_info, ip_address ) 
-                    VALUES ( {name}, {user_id}, {refresh_token_hash}, {expires_at}, {device_info}, {ip_address} )
+                    VALUES ( {name}, {user_id}, {token_hash}, {expires_at}, {device_info}, {ip_address} )
                     RETURNING *
                 """
             )
@@ -42,4 +38,32 @@ class SessionRepository:
             if session is None:
                 raise RuntimeError("Failed to create session")
 
-            return raw_refresh_token, session
+            return session
+
+    async def update_refresh_token(
+        self,
+        old_token_hash: str,
+        new_raw_refresh_token: str,
+        new_token_hash: str,
+        new_expires_at: datetime,
+    ) -> tuple[str, Session]:
+
+        async with (
+            self.pool.connection() as conn,
+            conn.cursor(row_factory=class_row(Session)) as cur,
+        ):
+            await cur.execute(
+                t"""
+                UPDATE refresh_tokens
+                SET token_hash = {new_token_hash}, expires_at = {new_expires_at}
+                WHERE token_hash = {old_token_hash} AND expires_at > CURRENT_TIMESTAMP
+                RETURNING *
+                """
+            )
+
+            updated_session = await cur.fetchone()
+
+            if updated_session is None:
+                raise InvalidTokenError("Invalid or expired refresh token")
+
+            return new_raw_refresh_token, updated_session

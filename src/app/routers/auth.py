@@ -1,22 +1,14 @@
+from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
-from psycopg.errors import UniqueViolation
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, status
+from fastapi.responses import Response
 
-from app.core.security import (
-    create_access_token,
-    hash_password,
-    verify_password,
-)
-from app.dependencies import get_session_repo, get_user_repo
-from app.models.auth import (
-    AuthRegister,
-    AuthRegisterResponse,
-    AuthToken,
-    AuthTokenResponse,
-)
-from app.repositories.session import SessionRepository
-from app.repositories.user import UserRepository
+from app.core.security import create_access_token, verify_password
+from app.dependencies import get_session_service, get_user_service
+from app.models.auth import AuthRegister, AuthToken, AuthTokenResponse
+from app.services.session import SessionService
+from app.services.user import UserService
 
 router = APIRouter(
     prefix="/auth",
@@ -24,74 +16,68 @@ router = APIRouter(
 )
 
 
-def extract_client_info(request: Request) -> tuple[str | None, str | None]:
-    """helper to safely extract device_info and ip_address from HTTP headers."""
+def set_refresh_token_cookie(
+    res: Response, raw_refresh_token: str, expires_at: datetime
+):
+    remaining_seconds = int((expires_at - datetime.now(tz=UTC)).total_seconds())
 
-    device_info = request.headers.get("User-Agent")
-    x_forwarded_for = request.headers.get("X-Forwarded-For")
+    # Ensure max_age isn't negative if the session expired right before execution
+    max_age = max(0, remaining_seconds)
 
-    ip_address: str | None
-
-    if x_forwarded_for:
-        ip_address = x_forwarded_for.split(",")[0].strip()
-    else:
-        ip_address = request.client.host if request.client else None
-
-    return device_info, ip_address
+    res.set_cookie(
+        key="refresh_token",
+        value=raw_refresh_token,
+        max_age=max_age,
+        secure=True,
+        httponly=True,
+        samesite="strict",
+    )
 
 
 @router.post(
     "/register",
-    response_model=AuthRegisterResponse,
+    response_model=AuthTokenResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def register(
+    res: Response,
     data: AuthRegister,
-    user_repo: Annotated[UserRepository, Depends(get_user_repo)],
-    session_repo: Annotated[SessionRepository, Depends(get_session_repo)],
+    user_service: Annotated[UserService, Depends(get_user_service)],
+    session_service: Annotated[SessionService, Depends(get_session_service)],
     request: Request,
 ):
-    hashed_password = hash_password(data.password)
 
-    try:
-        user = await user_repo.create(
-            email=data.email,
-            hashed_password=hashed_password,
-        )
-    except UniqueViolation as e:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"User with {data.email!r} already exists.",
-        ) from e
+    user = await user_service.create(email=data.email, password=data.password)
 
-    device_info, ip_address = extract_client_info(request)
-
-    raw_refresh_token, _ = await session_repo.create(
+    raw_refresh_token, session = await session_service.create(
         name=None,
         user_id=user.id,
-        device_info=device_info,
-        ip_address=ip_address,
+        request=request,
+    )
+
+    set_refresh_token_cookie(
+        res=res,
+        raw_refresh_token=raw_refresh_token,
+        expires_at=session.expires_at,
     )
 
     access_token = create_access_token(user_id=user.id)
 
-    return {
-        "user": user,
-        "access_token": access_token,
-        "refresh_token": raw_refresh_token,
-    }
+    return {"access_token": access_token, "type": "Bearer"}
 
 
 @router.post("/token", response_model=AuthTokenResponse, status_code=status.HTTP_200_OK)
 async def token(
+    res: Response,
     data: AuthToken,
-    user_repo: Annotated[UserRepository, Depends(get_user_repo)],
-    session_repo: Annotated[SessionRepository, Depends(get_session_repo)],
+    user_service: Annotated[UserService, Depends(get_user_service)],
+    session_service: Annotated[SessionService, Depends(get_session_service)],
     request: Request,
 ):
-    user = await user_repo.get_by_email(email=data.email)
 
-    if user is None or not verify_password(
+    user = await user_service.get_by_email(email=data.email)
+
+    if not verify_password(
         plain_password=data.password,
         hashed_password=user.hashed_password,
     ):
@@ -101,27 +87,56 @@ async def token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    device_info, ip_address = extract_client_info(request)
-
-    raw_refresh_token, _ = await session_repo.create(
+    raw_refresh_token, session = await session_service.create(
         name=None,
         user_id=user.id,
-        device_info=device_info,
-        ip_address=ip_address,
+        request=request,
+    )
+
+    set_refresh_token_cookie(
+        res=res,
+        raw_refresh_token=raw_refresh_token,
+        expires_at=session.expires_at,
     )
 
     access_token = create_access_token(user_id=user.id)
 
     return {
-        "user": user,
         "access_token": access_token,
-        "refresh_token": raw_refresh_token,
         "type": "Bearer",
     }
 
 
-@router.post("/refresh")
-def refresh(): ...
+@router.post(
+    "/refresh", response_model=AuthTokenResponse, status_code=status.HTTP_200_OK
+)
+async def refresh(
+    res: Response,
+    session_service: Annotated[SessionService, Depends(get_session_service)],
+    refresh_token: Annotated[str | None, Cookie()] = None,
+):
+    if refresh_token is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token cookie missing",
+        )
+
+    raw_refresh_token, session = await session_service.update_refresh_token(
+        raw_refresh_token=refresh_token
+    )
+
+    set_refresh_token_cookie(
+        res=res,
+        raw_refresh_token=raw_refresh_token,
+        expires_at=session.expires_at,
+    )
+
+    access_token = create_access_token(user_id=session.user_id)
+
+    return {
+        "access_token": access_token,
+        "type": "Bearer",
+    }
 
 
 @router.post("/logout")
