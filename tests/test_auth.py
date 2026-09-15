@@ -25,14 +25,8 @@ async def test_auth_register(client: AsyncClient):
 
     assert res.status_code == 201
 
-    data = res.json()
-
-    assert "user" in data
-    assert data["user"]["is_active"] == False
-    assert data["user"]["is_verified"] == False
-    assert data["user"]["email"] == "user@email.com"
-    assert "access_token" in data
-    assert "refresh_token" in data
+    assert res.cookies.get("access_token") is not None
+    assert res.cookies.get("refresh_token") is not None
 
 
 async def test_register_duplicate_user(client: AsyncClient):
@@ -59,7 +53,7 @@ async def test_register_duplicate_user(client: AsyncClient):
     assert res.status_code == 409
 
 
-async def test_token(client: AsyncClient):
+async def test_auth_token(client: AsyncClient):
 
     user = {
         "email": "user@email.com",
@@ -82,9 +76,74 @@ async def test_token(client: AsyncClient):
 
     assert res.status_code == 200
 
-    data = res.json()
+    assert res.cookies.get("access_token") is not None
+    assert res.cookies.get("refresh_token") is not None
 
-    assert "user" in data
-    assert "access_token" in data
-    assert "refresh_token" in data
-    assert data["type"] == "Bearer"
+
+async def test_auth_refresh(client: AsyncClient):
+
+    user = {
+        "email": "user@email.com",
+        "password": "123456",
+    }
+
+    res = await client.post(
+        "/auth/register",
+        headers={"Content-Type": "application/json"},
+        json=user,
+    )
+
+    assert res.status_code == 201
+
+    access_token = res.cookies.get("access_token")
+    refresh_token = res.cookies.get("refresh_token")
+
+    assert access_token is not None
+    assert refresh_token is not None
+
+    client.cookies.clear()
+
+    client.cookies["refresh_token"] = refresh_token
+
+    res = await client.post("/auth/refresh")
+
+    assert res.status_code == 200
+
+    assert res.cookies.get("access_token") is not None
+    assert res.cookies.get("refresh_token") is not None
+    assert res.cookies.get("access_token") != access_token
+    assert res.cookies.get("refresh_token") != refresh_token
+
+
+async def test_auth_logout(client: AsyncClient):
+
+    user = {
+        "email": "user@email.com",
+        "password": "123456",
+    }
+
+    res = await client.post(
+        "/auth/register",
+        headers={"Content-Type": "application/json"},
+        json=user,
+    )
+
+    assert res.status_code == 201
+
+    access_token = res.cookies.get("access_token")
+    refresh_token = res.cookies.get("refresh_token")
+
+    assert access_token is not None
+    assert refresh_token is not None
+
+    client.cookies.clear()
+
+    client.cookies["access_token"] = access_token
+    client.cookies["refresh_token"] = refresh_token
+
+    res = await client.get("/auth/logout")
+
+    assert res.status_code == 200
+
+    assert res.cookies.get("access_token") is None
+    assert res.cookies.get("refresh_token") is None

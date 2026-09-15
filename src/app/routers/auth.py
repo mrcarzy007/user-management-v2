@@ -5,8 +5,10 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 
 from app.core.security import create_access_token, verify_password
-from app.dependencies import get_session_service, get_user_service
-from app.models.auth import AuthRegister, AuthToken, AuthTokenResponse
+from app.core.settings import settings
+from app.dependencies import get_current_user, get_session_service, get_user_service
+from app.models.auth import AuthRegister, AuthToken
+from app.models.user import User
 from app.services.session import SessionService
 from app.services.user import UserService
 
@@ -14,6 +16,22 @@ router = APIRouter(
     prefix="/auth",
     tags=["Auth"],
 )
+
+ACCESS_TOKEN_COOKIE_NAME = "access_token"
+REFRESH_TOKEN_COOKIE_NAME = "refresh_token"
+
+
+def set_access_token_cookie(res: Response, access_token: str):
+    max_age = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60  # 60 seconds * minutes
+
+    res.set_cookie(
+        key=ACCESS_TOKEN_COOKIE_NAME,
+        value=access_token,
+        max_age=max_age,
+        secure=True,
+        httponly=True,
+        samesite="strict",
+    )
 
 
 def set_refresh_token_cookie(
@@ -25,7 +43,7 @@ def set_refresh_token_cookie(
     max_age = max(0, remaining_seconds)
 
     res.set_cookie(
-        key="refresh_token",
+        key=REFRESH_TOKEN_COOKIE_NAME,
         value=raw_refresh_token,
         max_age=max_age,
         secure=True,
@@ -34,11 +52,7 @@ def set_refresh_token_cookie(
     )
 
 
-@router.post(
-    "/register",
-    response_model=AuthTokenResponse,
-    status_code=status.HTTP_201_CREATED,
-)
+@router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(
     res: Response,
     data: AuthRegister,
@@ -63,10 +77,10 @@ async def register(
 
     access_token = create_access_token(user_id=user.id)
 
-    return {"access_token": access_token, "type": "Bearer"}
+    set_access_token_cookie(res, access_token)
 
 
-@router.post("/token", response_model=AuthTokenResponse, status_code=status.HTTP_200_OK)
+@router.post("/token", status_code=status.HTTP_200_OK)
 async def token(
     res: Response,
     data: AuthToken,
@@ -101,28 +115,18 @@ async def token(
 
     access_token = create_access_token(user_id=user.id)
 
-    return {
-        "access_token": access_token,
-        "type": "Bearer",
-    }
+    set_access_token_cookie(res, access_token)
 
 
-@router.post(
-    "/refresh", response_model=AuthTokenResponse, status_code=status.HTTP_200_OK
-)
+@router.post("/refresh", status_code=status.HTTP_200_OK)
 async def refresh(
     res: Response,
     session_service: Annotated[SessionService, Depends(get_session_service)],
-    refresh_token: Annotated[str | None, Cookie()] = None,
+    refresh_token: Annotated[str, Cookie()],
 ):
-    if refresh_token is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token cookie missing",
-        )
 
     raw_refresh_token, session = await session_service.update_refresh_token(
-        raw_refresh_token=refresh_token
+        refresh_token=refresh_token
     )
 
     set_refresh_token_cookie(
@@ -133,14 +137,24 @@ async def refresh(
 
     access_token = create_access_token(user_id=session.user_id)
 
-    return {
-        "access_token": access_token,
-        "type": "Bearer",
-    }
+    set_access_token_cookie(res, access_token)
 
 
-@router.post("/logout")
-def logout(): ...
+@router.get("/logout", status_code=status.HTTP_200_OK)
+async def logout(
+    res: Response,
+    session_service: Annotated[SessionService, Depends(get_session_service)],
+    refresh_token: Annotated[str, Cookie()],
+    _: Annotated[User, Depends(get_current_user)],
+):
+    await session_service.logout(refresh_token=refresh_token)
+
+    res.delete_cookie(
+        ACCESS_TOKEN_COOKIE_NAME, secure=True, httponly=True, samesite="strict"
+    )
+    res.delete_cookie(
+        REFRESH_TOKEN_COOKIE_NAME, secure=True, httponly=True, samesite="strict"
+    )
 
 
 @router.post("/logout-all")

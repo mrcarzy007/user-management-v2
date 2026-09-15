@@ -1,8 +1,10 @@
 from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import Cookie, Depends, Request
 from psycopg_pool import AsyncConnectionPool
 
+from app.core.exceptions import InvalidTokenError
+from app.core.security import decode_access_token
 from app.repositories.session import SessionRepository
 from app.repositories.user import UserRepository
 from app.services.session import SessionService
@@ -28,3 +30,17 @@ def get_session_service(
     pool: Annotated[AsyncConnectionPool, Depends(get_db_pool)],
 ) -> SessionService:
     return SessionService(session_repo=SessionRepository(pool=pool))
+
+
+async def get_current_user(
+    access_token: Annotated[str, Cookie()],
+    user_service: Annotated[UserService, Depends(get_user_service)],
+):
+    user_id = decode_access_token(access_token)
+
+    if user_id is None:
+        raise InvalidTokenError("Invalid or expired access token")
+
+    user = await user_service.get_by_id(user_id)
+
+    return user

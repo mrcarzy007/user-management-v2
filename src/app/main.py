@@ -27,9 +27,6 @@ app = FastAPI(lifespan=lifespan)
 app.include_router(all_routers)
 
 
-app = FastAPI(title="Task API")
-
-
 @app.exception_handler(InvalidTokenError)
 async def invalid_token_exception_handler(request: Request, exc: InvalidTokenError):
     """Maps domain token errors to HTTP 401 Unauthorized responses."""

@@ -48,8 +48,8 @@ class SessionService:
 
         return raw_refresh_token, session
 
-    async def update_refresh_token(self, raw_refresh_token: str):
-        old_token_hash = compute_token_hash(raw_refresh_token)
+    async def update_refresh_token(self, refresh_token: str):
+        old_token_hash = compute_token_hash(refresh_token)
 
         new_raw_refresh_token, new_token_hash = generate_refresh_token()
 
@@ -63,3 +63,8 @@ class SessionService:
             new_token_hash=new_token_hash,
             new_expires_at=new_expires_at,
         )
+
+    async def logout(self, refresh_token: str):
+        token_hash = compute_token_hash(refresh_token)
+
+        await self.session_repo.delete_session(token_hash=token_hash)

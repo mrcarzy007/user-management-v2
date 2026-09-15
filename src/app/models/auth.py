@@ -9,8 +9,3 @@ class AuthRegister(BaseModel):
 class AuthToken(BaseModel):
     email: EmailStr
     password: str
-
-
-class AuthTokenResponse(BaseModel):
-    access_token: str
-    type: str

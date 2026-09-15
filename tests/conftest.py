@@ -37,6 +37,7 @@ async def db_pool(test_db: str):
 async def client(db_pool: AsyncConnectionPool):
     async with db_pool.connection() as conn:
         await conn.execute("TRUNCATE TABLE users RESTART IDENTITY CASCADE;")
+        await conn.execute("TRUNCATE TABLE refresh_tokens RESTART IDENTITY CASCADE;")
 
     transport = ASGITransport(app)
 

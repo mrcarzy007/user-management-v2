@@ -47,3 +47,18 @@ class UserRepository:
                 raise RecordNotFoundError("User not found")
 
             return user
+
+    async def get_by_id(self, user_id: int) -> User:
+
+        async with (
+            self.pool.connection() as conn,
+            conn.cursor(row_factory=class_row(User)) as cur,
+        ):
+            await cur.execute(t"""SELECT * FROM users WHERE id = {user_id}""")
+
+            user = await cur.fetchone()
+
+            if user is None:
+                raise RecordNotFoundError("User not found")
+
+            return user

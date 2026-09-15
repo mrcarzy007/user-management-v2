@@ -10,7 +10,7 @@ class DomainError(Exception):
 
 
 class InvalidTokenError(DomainError):
-    """Raised when an action or refresh token is invalid or expired."""
+    """Raised when an access, action or refresh token is invalid or expired."""
 
 
 class RecordNotFoundError(DomainError):

@@ -67,3 +67,19 @@ class SessionRepository:
                 raise InvalidTokenError("Invalid or expired refresh token")
 
             return new_raw_refresh_token, updated_session
+
+    async def delete_session(self, token_hash):
+        async with (
+            self.pool.connection() as conn,
+            conn.cursor(row_factory=class_row(Session)) as cur,
+        ):
+            await cur.execute(
+                t"""
+                DELETE FROM refresh_tokens WHERE token_hash = {token_hash} RETURNING *
+                """
+            )
+
+            session = await cur.fetchone()
+
+            if session is None:
+                raise InvalidTokenError("Invalid or expired refresh token")

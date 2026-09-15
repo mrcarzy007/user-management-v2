@@ -29,7 +29,7 @@ def create_access_token(user_id: int) -> str:
     payload = {
         "sub": str(user_id),
         "iat": int(now.timestamp()),
-        "exp": expire,
+        "exp": expire.timestamp(),
         "type": "access",
     }
 
@@ -38,6 +38,19 @@ def create_access_token(user_id: int) -> str:
         key=settings.JWT_SECRET_KEY,
         algorithm=settings.JWT_ALGORITHM,
     )
+
+
+def decode_access_token(access_token: str):
+    try:
+        payload = jwt.decode(
+            access_token,
+            key=settings.JWT_SECRET_KEY,
+            algorithms=[settings.JWT_ALGORITHM],
+        )
+
+        return int(payload["sub"])
+    except jwt.exceptions.PyJWTError:
+        return
 
 
 def generate_action_token(nbytes: int = 32) -> tuple[str, str]:
