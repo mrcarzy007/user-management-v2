@@ -1,6 +1,6 @@
-from datetime import datetime
-
 from pydantic import BaseModel, EmailStr
+
+from .user import UserResponse
 
 
 class AuthRegister(BaseModel):
@@ -14,14 +14,13 @@ class AuthToken(BaseModel):
 
 
 class AuthRegisterResponse(BaseModel):
-    id: int
-    email: str
-    is_active: bool
-    is_verified: bool
-    created_at: datetime
-    updated_at: datetime
+    user: UserResponse
+    access_token: str
+    refresh_token: str
 
 
 class AuthTokenResponse(BaseModel):
-    token: str
+    user: UserResponse
+    access_token: str
+    refresh_token: str
     type: str

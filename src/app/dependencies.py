@@ -3,8 +3,8 @@ from typing import Annotated
 from fastapi import Depends, Request
 from psycopg_pool import AsyncConnectionPool
 
+from app.repositories.session import SessionRepository
 from app.repositories.user import UserRepository
-from app.services.auth import AuthService
 
 
 def get_db_pool(req: Request) -> AsyncConnectionPool:
@@ -16,8 +16,13 @@ def get_db_pool(req: Request) -> AsyncConnectionPool:
     return pool
 
 
-async def get_auth_service(
+def get_user_repo(
     pool: Annotated[AsyncConnectionPool, Depends(get_db_pool)],
-) -> AuthService:
+) -> UserRepository:
+    return UserRepository(pool=pool)
 
-    return AuthService(user_repo=UserRepository(pool))
+
+def get_session_repo(
+    pool: Annotated[AsyncConnectionPool, Depends(get_db_pool)],
+) -> SessionRepository:
+    return SessionRepository(pool=pool)

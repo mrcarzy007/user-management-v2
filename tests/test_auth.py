@@ -1,7 +1,7 @@
 from httpx import AsyncClient
 
 
-async def test_register_user_input_validation(client: AsyncClient):
+async def test_auth_register_input_validation(client: AsyncClient):
     res = await client.post(
         "/auth/register",
         headers={"Content-Type": "application/json"},
@@ -13,7 +13,7 @@ async def test_register_user_input_validation(client: AsyncClient):
     assert res.status_code == 422
 
 
-async def test_register_user(client: AsyncClient):
+async def test_auth_register(client: AsyncClient):
     res = await client.post(
         "/auth/register",
         headers={"Content-Type": "application/json"},
@@ -27,9 +27,12 @@ async def test_register_user(client: AsyncClient):
 
     data = res.json()
 
-    assert data["is_active"] == False
-    assert data["is_verified"] == False
-    assert data["email"] == "user@email.com"
+    assert "user" in data
+    assert data["user"]["is_active"] == False
+    assert data["user"]["is_verified"] == False
+    assert data["user"]["email"] == "user@email.com"
+    assert "access_token" in data
+    assert "refresh_token" in data
 
 
 async def test_register_duplicate_user(client: AsyncClient):
@@ -81,5 +84,7 @@ async def test_token(client: AsyncClient):
 
     data = res.json()
 
-    assert "token" in data
+    assert "user" in data
+    assert "access_token" in data
+    assert "refresh_token" in data
     assert data["type"] == "Bearer"
