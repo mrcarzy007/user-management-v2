@@ -30,6 +30,8 @@ def extract_client_info(request: Request) -> tuple[str | None, str | None]:
     device_info = request.headers.get("User-Agent")
     x_forwarded_for = request.headers.get("X-Forwarded-For")
 
+    ip_address: str | None
+
     if x_forwarded_for:
         ip_address = x_forwarded_for.split(",")[0].strip()
     else:
