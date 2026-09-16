@@ -4,13 +4,21 @@ from typing import Annotated
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 
+from app.core.email import send_email
 from app.core.exceptions import InvalidTokenError
 from app.core.security import create_access_token, verify_password
 from app.core.settings import settings
-from app.dependencies import get_current_user, get_session_service, get_user_service
+from app.dependencies import (
+    get_action_token_service,
+    get_current_user,
+    get_session_service,
+    get_user_service,
+)
+from app.models.action_token import TokenType
 from app.models.auth import AuthRegister, AuthToken
 from app.models.session import SessionResponse
 from app.models.user import User, UserResponse
+from app.services.action_token import ActionTokenService
 from app.services.session import SessionService
 from app.services.user import UserService
 
@@ -216,13 +224,46 @@ async def get_all_sessions(
     )
 
 
-@router.post("/verify-email")
-def verify_email(): ...
+@router.post("/verify-email/send", status_code=status.HTTP_204_NO_CONTENT)
+async def verify_email_send(
+    current_user: Annotated[User, Depends(get_current_user)],
+    action_token_service: Annotated[
+        ActionTokenService, Depends(get_action_token_service)
+    ],
+) -> None:
+    raw_token = await action_token_service.create(
+        token_type=TokenType.email_verification, user_id=current_user.id
+    )
+
+    verification_url = f"{settings.BASE_URL.rstrip('/')}/verify-email?token={raw_token}"
+
+    await send_email(
+        to=current_user.email,
+        subject=f"Verify Your Email —— {settings.APP_NAME}",
+        text=f"""
+        Hello,
+        Please click below link to verify your email.
+        {verification_url}
+        """,
+    )
+
+
+@router.post("/verify-email", status_code=status.HTTP_204_NO_CONTENT)
+async def verify_email(
+    token: str,
+    action_token_service: Annotated[
+        ActionTokenService, Depends(get_action_token_service)
+    ],
+) -> None:
+    await action_token_service.verify(
+        token=token,
+        token_type=TokenType.email_verification,
+    )
 
 
 @router.post("/forgot-password")
-def forgot_password(): ...
+async def forgot_password(): ...
 
 
 @router.post("/reset-password")
-def reset_password(): ...
+async def reset_password(): ...

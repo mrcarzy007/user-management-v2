@@ -8,9 +8,12 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    APP_NAME: str
+    BASE_URL: str
     DATABASE_URL: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
     REFRESH_TOKEN_EXPIRE_MINUTES: int
+    ACTION_TOKEN_EXPIRE_MINUTES: int
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str
 

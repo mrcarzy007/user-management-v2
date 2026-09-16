@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
     await pool.close()
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan, title=settings.APP_NAME)
 
 app.include_router(all_routers)
 

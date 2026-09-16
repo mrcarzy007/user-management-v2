@@ -5,8 +5,10 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.core.exceptions import InvalidTokenError
 from app.core.security import decode_access_token
+from app.repositories.action_token import ActionTokenRepository
 from app.repositories.session import SessionRepository
 from app.repositories.user import UserRepository
+from app.services.action_token import ActionTokenService
 from app.services.session import SessionService
 from app.services.user import UserService
 
@@ -30,6 +32,12 @@ def get_session_service(
     pool: Annotated[AsyncConnectionPool, Depends(get_db_pool)],
 ) -> SessionService:
     return SessionService(session_repo=SessionRepository(pool=pool))
+
+
+def get_action_token_service(
+    pool: Annotated[AsyncConnectionPool, Depends(get_db_pool)],
+) -> ActionTokenService:
+    return ActionTokenService(action_token_repo=ActionTokenRepository(pool=pool))
 
 
 async def get_current_user(
