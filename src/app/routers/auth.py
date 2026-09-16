@@ -4,11 +4,13 @@ from typing import Annotated
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 
+from app.core.exceptions import InvalidTokenError
 from app.core.security import create_access_token, verify_password
 from app.core.settings import settings
 from app.dependencies import get_current_user, get_session_service, get_user_service
 from app.models.auth import AuthRegister, AuthToken
-from app.models.user import User
+from app.models.session import SessionResponse
+from app.models.user import User, UserResponse
 from app.services.session import SessionService
 from app.services.user import UserService
 
@@ -52,14 +54,14 @@ def set_refresh_token_cookie(
     )
 
 
-@router.post("/register", status_code=status.HTTP_201_CREATED)
+@router.post("/register", status_code=status.HTTP_204_NO_CONTENT)
 async def register(
     res: Response,
     data: AuthRegister,
     user_service: Annotated[UserService, Depends(get_user_service)],
     session_service: Annotated[SessionService, Depends(get_session_service)],
     request: Request,
-):
+) -> None:
 
     user = await user_service.create(email=data.email, password=data.password)
 
@@ -80,14 +82,15 @@ async def register(
     set_access_token_cookie(res, access_token)
 
 
-@router.post("/token", status_code=status.HTTP_200_OK)
+@router.post("/token", status_code=status.HTTP_204_NO_CONTENT)
 async def token(
     res: Response,
     data: AuthToken,
     user_service: Annotated[UserService, Depends(get_user_service)],
     session_service: Annotated[SessionService, Depends(get_session_service)],
     request: Request,
-):
+    refresh_token: Annotated[str | None, Cookie()] = None,
+) -> None:
 
     user = await user_service.get_by_email(email=data.email)
 
@@ -107,6 +110,9 @@ async def token(
         request=request,
     )
 
+    if refresh_token is not None:
+        await session_service.logout(user_id=user.id, refresh_token=refresh_token)
+
     set_refresh_token_cookie(
         res=res,
         raw_refresh_token=raw_refresh_token,
@@ -118,12 +124,12 @@ async def token(
     set_access_token_cookie(res, access_token)
 
 
-@router.post("/refresh", status_code=status.HTTP_200_OK)
+@router.get("/refresh", status_code=status.HTTP_204_NO_CONTENT)
 async def refresh(
     res: Response,
     session_service: Annotated[SessionService, Depends(get_session_service)],
     refresh_token: Annotated[str, Cookie()],
-):
+) -> None:
 
     raw_refresh_token, session = await session_service.update_refresh_token(
         refresh_token=refresh_token
@@ -140,14 +146,14 @@ async def refresh(
     set_access_token_cookie(res, access_token)
 
 
-@router.get("/logout", status_code=status.HTTP_200_OK)
+@router.get("/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(
     res: Response,
     session_service: Annotated[SessionService, Depends(get_session_service)],
     refresh_token: Annotated[str, Cookie()],
-    _: Annotated[User, Depends(get_current_user)],
-):
-    await session_service.logout(refresh_token=refresh_token)
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    await session_service.logout(user_id=current_user.id, refresh_token=refresh_token)
 
     res.delete_cookie(
         ACCESS_TOKEN_COOKIE_NAME, secure=True, httponly=True, samesite="strict"
@@ -157,12 +163,57 @@ async def logout(
     )
 
 
-@router.post("/logout-all")
-def logout_all(): ...
+@router.get("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
+async def logout_all(
+    res: Response,
+    session_service: Annotated[SessionService, Depends(get_session_service)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> None:
+    await session_service.logout_all(user_id=current_user.id)
+
+    res.delete_cookie(
+        ACCESS_TOKEN_COOKIE_NAME, secure=True, httponly=True, samesite="strict"
+    )
+    res.delete_cookie(
+        REFRESH_TOKEN_COOKIE_NAME, secure=True, httponly=True, samesite="strict"
+    )
 
 
-@router.post("/me")
-def me(): ...
+@router.get("", response_model=UserResponse, status_code=status.HTTP_200_OK)
+async def get_me(
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    return current_user
+
+
+@router.get(
+    "/sessions/current", response_model=SessionResponse, status_code=status.HTTP_200_OK
+)
+async def get_current_session(
+    current_user: Annotated[User, Depends(get_current_user)],
+    session_service: Annotated[SessionService, Depends(get_session_service)],
+    refresh_token: Annotated[str, Cookie()],
+):
+    sessions = await session_service.get_sessions(
+        user_id=current_user.id, refresh_token=refresh_token
+    )
+
+    if not sessions:
+        raise InvalidTokenError("Invalid or expired refresh token")
+
+    return sessions[0]
+
+
+@router.get(
+    "/sessions", response_model=list[SessionResponse], status_code=status.HTTP_200_OK
+)
+async def get_all_sessions(
+    current_user: Annotated[User, Depends(get_current_user)],
+    session_service: Annotated[SessionService, Depends(get_session_service)],
+):
+    return await session_service.get_sessions(
+        user_id=current_user.id, refresh_token=None
+    )
 
 
 @router.post("/verify-email")

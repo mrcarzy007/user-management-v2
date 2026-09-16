@@ -64,7 +64,18 @@ class SessionService:
             new_expires_at=new_expires_at,
         )
 
-    async def logout(self, refresh_token: str):
+    async def logout(self, user_id: int, refresh_token: str) -> None:
         token_hash = compute_token_hash(refresh_token)
 
-        await self.session_repo.delete_session(token_hash=token_hash)
+        return await self.session_repo.delete_session(user_id, token_hash=token_hash)
+
+    async def logout_all(self, user_id: int) -> None:
+        return await self.session_repo.delete_all_sessions(user_id)
+
+    async def get_sessions(self, user_id: int, refresh_token: str | None = None):
+
+        token_hash = compute_token_hash(refresh_token) if refresh_token else None
+
+        return await self.session_repo.get_sessions(
+            user_id=user_id, token_hash=token_hash
+        )

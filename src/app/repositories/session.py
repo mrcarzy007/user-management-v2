@@ -1,9 +1,10 @@
 from datetime import datetime
 
+from psycopg import sql
 from psycopg.rows import class_row
 from psycopg_pool import AsyncConnectionPool
 
-from app.core.exceptions import InvalidTokenError
+from app.core.exceptions import InvalidTokenError, RecordNotFoundError
 from app.models.session import Session
 
 
@@ -68,14 +69,41 @@ class SessionRepository:
 
             return new_raw_refresh_token, updated_session
 
-    async def delete_session(self, token_hash):
+    async def get_sessions(
+        self, user_id: int, token_hash: str | None = None
+    ) -> list[Session]:
+        filters = []
+
+        if token_hash is not None:
+            filters.append(t"token_hash = {token_hash}")
+
+        query = sql.SQL(", ").join(filters) if filters else sql.SQL("TRUE")
+
         async with (
             self.pool.connection() as conn,
             conn.cursor(row_factory=class_row(Session)) as cur,
         ):
             await cur.execute(
                 t"""
-                DELETE FROM refresh_tokens WHERE token_hash = {token_hash} RETURNING *
+                SELECT * FROM refresh_tokens
+                WHERE user_id = {user_id} AND {query:q}
+                """
+            )
+
+            sessions = await cur.fetchall()
+
+            return sessions
+
+    async def delete_session(self, user_id: int, token_hash: str) -> None:
+        async with (
+            self.pool.connection() as conn,
+            conn.cursor(row_factory=class_row(Session)) as cur,
+        ):
+            await cur.execute(
+                t"""
+                DELETE FROM refresh_tokens 
+                WHERE token_hash = {token_hash} AND user_id = {user_id} 
+                RETURNING *
                 """
             )
 
@@ -83,3 +111,19 @@ class SessionRepository:
 
             if session is None:
                 raise InvalidTokenError("Invalid or expired refresh token")
+
+    async def delete_all_sessions(self, user_id: int) -> None:
+        async with (
+            self.pool.connection() as conn,
+            conn.cursor(row_factory=class_row(Session)) as cur,
+        ):
+            await cur.execute(
+                t"""
+                DELETE FROM refresh_tokens 
+                WHERE user_id = {user_id} 
+                RETURNING *
+                """
+            )
+
+            if cur.rowcount <= 0:
+                raise RecordNotFoundError("No sessions found")
