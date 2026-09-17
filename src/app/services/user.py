@@ -21,6 +21,18 @@ class UserService:
 
         return user
 
+    async def update_email(
+        self, user_id: int, email: str, db_conn: AsyncConnection | None = None
+    ):
+
+        user = await self.user_repo.update_user(
+            user_id=user_id,
+            email=email,
+            db_conn=db_conn,
+        )
+
+        return user
+
     async def update_password(
         self, user_id: int, password: str, db_conn: AsyncConnection | None = None
     ):

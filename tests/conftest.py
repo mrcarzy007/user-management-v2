@@ -12,7 +12,7 @@ def test_db():
     test_db_url = "postgres://postgres:postgres@postgres:5432/test_db?sslmode=disable"
 
     process = subprocess.run(
-        ["dbmate", "--url", test_db_url, "-d", "./migrations", "up"],
+        ["dbmate", "--url", test_db_url, "up"],
         check=True,
     )
 

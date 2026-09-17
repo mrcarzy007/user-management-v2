@@ -133,10 +133,3 @@ async def token(
     access_token = create_access_token(user_id=user.id)
 
     set_access_token_cookie(res, access_token)
-
-
-@router.get("/me", response_model=UserResponse, status_code=status.HTTP_200_OK)
-async def me(
-    current_user: Annotated[User, Depends(get_current_user)],
-):
-    return current_user

@@ -60,7 +60,7 @@ class ActionTokenService:
 
     async def consume(
         self, token_type: TokenType, token: str, db_conn: AsyncConnection | None = None
-    ) -> int:
+    ):
 
         token_hash = compute_token_hash(token)
 

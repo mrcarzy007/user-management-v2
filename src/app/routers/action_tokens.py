@@ -1,10 +1,14 @@
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, status
 from psycopg_pool import AsyncConnectionPool
 from pydantic import EmailStr
 
-from app.background_tasks import send_forgot_password_email, send_verification_email
+from app.background_tasks import (
+    send_change_email_verification,
+    send_forgot_password_email,
+    send_verification_email,
+)
 from app.core.exceptions import EmailAlreadyVerifiedError
 from app.dependencies import (
     get_action_token_service,
@@ -59,13 +63,13 @@ async def verify_email(
     token: str,
 ) -> None:
     async with pool.connection() as conn:
-        user_id = await action_token_service.consume(
+        action_token = await action_token_service.consume(
             token=token,
             token_type=TokenType.email_verification,
             db_conn=conn,
         )
 
-        await user_service.verify_email(db_conn=conn, user_id=user_id)
+        await user_service.verify_email(db_conn=conn, user_id=action_token.user_id)
 
 
 @router.post("/password-reset/send")
@@ -92,7 +96,7 @@ async def password_reset_send(
     )
 
 
-@router.post("/password-reset")
+@router.patch("/password-reset")
 async def password_reset(
     password: Annotated[str, Body()],
     action_token_service: Annotated[
@@ -103,14 +107,70 @@ async def password_reset(
     token: str,
 ) -> None:
     async with pool.connection() as conn:
-        user_id = await action_token_service.consume(
+        action_token = await action_token_service.consume(
             token=token,
             token_type=TokenType.password_reset,
             db_conn=conn,
         )
 
         await user_service.update_password(
-            user_id=user_id,
+            user_id=action_token.user_id,
             db_conn=conn,
             password=password,
+        )
+
+
+@router.patch("/email")
+async def change_email(
+    email: Annotated[EmailStr, Body()],
+    current_user: Annotated[User, Depends(get_current_user)],
+    user_service: Annotated[UserService, Depends(get_user_service)],
+    action_token_service: Annotated[
+        ActionTokenService, Depends(get_action_token_service)
+    ],
+    background_tasks: BackgroundTasks,
+) -> None:
+    if email == current_user.email:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"detail": "Email is already updated"},
+        )
+
+    user = await user_service.get_by_id(current_user.id)
+
+    raw_token = await action_token_service.create(
+        token_type=TokenType.email_change, user=user, payload={"email": email}
+    )
+
+    background_tasks.add_task(
+        send_change_email_verification,
+        action_token_service,
+        email,
+        raw_token,
+    )
+
+
+@router.patch("/verify-new-email")
+async def verify_new_email(
+    action_token_service: Annotated[
+        ActionTokenService, Depends(get_action_token_service)
+    ],
+    pool: Annotated[AsyncConnectionPool, Depends(get_db_pool)],
+    user_service: Annotated[UserService, Depends(get_user_service)],
+    token: str,
+) -> None:
+    async with pool.connection() as conn:
+        action_token = await action_token_service.consume(
+            token=token,
+            token_type=TokenType.email_change,
+            db_conn=conn,
+        )
+
+        if "email" not in action_token.payload:
+            raise RuntimeError("Failed to retreive new email")
+
+        await user_service.update_email(
+            user_id=action_token.user_id,
+            db_conn=conn,
+            email=action_token.payload.email,
         )

@@ -54,7 +54,7 @@ class ActionTokenRepository:
 
     async def consume(
         self, token_hash: str, token_type: str, db_conn: AsyncConnection | None = None
-    ) -> int:
+    ) -> ActionToken:
         async with (
             get_db_conn(self.pool, db_conn) as conn,
             conn.cursor(row_factory=class_row(ActionToken)) as cur,
@@ -72,7 +72,7 @@ class ActionTokenRepository:
             if action_token is None:
                 raise InvalidTokenError("Invalid or expired action token")
 
-            return action_token.user_id
+            return action_token
 
     async def revoke(
         self,

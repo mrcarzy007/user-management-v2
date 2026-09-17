@@ -112,7 +112,7 @@ async def logout_all(
     response_model=SessionResponse,
     status_code=status.HTTP_200_OK,
 )
-async def current_session(
+async def session_me(
     current_user: Annotated[User, Depends(get_current_user)],
     session_service: Annotated[SessionService, Depends(get_session_service)],
     refresh_token: Annotated[str, Cookie()],

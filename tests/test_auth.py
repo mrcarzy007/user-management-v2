@@ -131,7 +131,7 @@ async def test_get_me_returns_public_user_fields(client: AsyncClient):
     access_token, refresh_token = await register(client)
     use_tokens(client, access_token, refresh_token)
 
-    response = await client.get("/auth")
+    response = await client.get("/auth/me")
 
     assert response.status_code == 200
     assert response.json()["email"] == USER["email"]
@@ -163,7 +163,7 @@ async def test_verify_email_is_single_use(
     replay = await client.post("/auth/verify-email", params={"token": raw_token})
     assert replay.status_code == 204
 
-    user = await client.get("/auth")
+    user = await client.get("/auth/me")
     assert user.json()["is_verified"] is True
 
     second_attempt = await client.post(
@@ -176,11 +176,11 @@ async def test_verify_email_is_single_use(
 async def test_protected_routes_reject_missing_and_invalid_access_tokens(
     client: AsyncClient,
 ):
-    missing = await client.get("/auth")
+    missing = await client.get("/auth/me")
     assert missing.status_code == 422
 
     client.cookies["access_token"] = "invalid"
-    invalid = await client.get("/auth")
+    invalid = await client.get("/auth/me")
     assert invalid.status_code == 401
     assert invalid.json() == {"detail": "Invalid or expired access token"}
 
@@ -189,7 +189,7 @@ async def test_current_session_hides_token_hash(client: AsyncClient):
     access_token, refresh_token = await register(client)
     use_tokens(client, access_token, refresh_token)
 
-    response = await client.get("/auth/sessions/current")
+    response = await client.get("/auth/sessions/me")
 
     assert response.status_code == 200
     data = response.json()
@@ -203,7 +203,7 @@ async def test_current_session_rejects_unknown_refresh_token(client: AsyncClient
     access_token, _ = await register(client)
     use_tokens(client, access_token, "invalid")
 
-    response = await client.get("/auth/sessions/current")
+    response = await client.get("/auth/sessions/me")
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Invalid or expired refresh token"}
@@ -284,7 +284,7 @@ async def test_verify_email_with_query_token(
     verify = await client.post("/auth/verify-email", params={"token": raw_token})
     assert verify.status_code == 204
 
-    user = await client.get("/auth")
+    user = await client.get("/auth/me")
     assert user.json()["is_verified"] is True
 
     replay = await client.post("/auth/verify-email", params={"token": raw_token})
@@ -410,5 +410,5 @@ async def test_verify_email_send_revokes_previous_token(
     verify_second = await client.post("/auth/verify-email", params={"token": token2})
     assert verify_second.status_code == 204
 
-    user = await client.get("/auth")
+    user = await client.get("/auth/me")
     assert user.json()["is_verified"] is True
