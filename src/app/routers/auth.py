@@ -1,36 +1,20 @@
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import (
-    APIRouter,
-    BackgroundTasks,
-    Body,
-    Cookie,
-    Depends,
-    HTTPException,
-    Request,
-    status,
-)
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from psycopg_pool import AsyncConnectionPool
-from pydantic import EmailStr
 
-from app.background_tasks import send_forgot_password_email, send_verification_email
-from app.core.exceptions import EmailAlreadyVerifiedError, InvalidTokenError
 from app.core.security import create_access_token, verify_password
 from app.core.settings import settings
 from app.dependencies import (
-    get_action_token_service,
     get_current_user,
     get_db_pool,
     get_session_service,
     get_user_service,
 )
-from app.models.action_token import TokenType
 from app.models.auth import AuthRegister, AuthToken
-from app.models.session import SessionResponse
 from app.models.user import User, UserResponse
-from app.services.action_token import ActionTokenService
 from app.services.session import SessionService
 from app.services.user import UserService
 
@@ -151,183 +135,8 @@ async def token(
     set_access_token_cookie(res, access_token)
 
 
-@router.get("/refresh", status_code=status.HTTP_204_NO_CONTENT)
-async def refresh(
-    res: Response,
-    session_service: Annotated[SessionService, Depends(get_session_service)],
-    refresh_token: Annotated[str, Cookie()],
-) -> None:
-
-    raw_refresh_token, session = await session_service.update_refresh_token(
-        refresh_token=refresh_token
-    )
-
-    set_refresh_token_cookie(
-        res=res,
-        raw_refresh_token=raw_refresh_token,
-        expires_at=session.expires_at,
-    )
-
-    access_token = create_access_token(user_id=session.user_id)
-
-    set_access_token_cookie(res, access_token)
-
-
-@router.get("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(
-    res: Response,
-    session_service: Annotated[SessionService, Depends(get_session_service)],
-    refresh_token: Annotated[str, Cookie()],
-    current_user: Annotated[User, Depends(get_current_user)],
-) -> None:
-    await session_service.logout(user_id=current_user.id, refresh_token=refresh_token)
-
-    res.delete_cookie(
-        ACCESS_TOKEN_COOKIE_NAME, secure=True, httponly=True, samesite="strict"
-    )
-    res.delete_cookie(
-        REFRESH_TOKEN_COOKIE_NAME, secure=True, httponly=True, samesite="strict"
-    )
-
-
-@router.get("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
-async def logout_all(
-    res: Response,
-    session_service: Annotated[SessionService, Depends(get_session_service)],
-    current_user: Annotated[User, Depends(get_current_user)],
-) -> None:
-    await session_service.logout_all(user_id=current_user.id)
-
-    res.delete_cookie(
-        ACCESS_TOKEN_COOKIE_NAME, secure=True, httponly=True, samesite="strict"
-    )
-    res.delete_cookie(
-        REFRESH_TOKEN_COOKIE_NAME, secure=True, httponly=True, samesite="strict"
-    )
-
-
-@router.get("", response_model=UserResponse, status_code=status.HTTP_200_OK)
-async def get_me(
+@router.get("/me", response_model=UserResponse, status_code=status.HTTP_200_OK)
+async def me(
     current_user: Annotated[User, Depends(get_current_user)],
 ):
     return current_user
-
-
-@router.get(
-    "/sessions/current", response_model=SessionResponse, status_code=status.HTTP_200_OK
-)
-async def get_current_session(
-    current_user: Annotated[User, Depends(get_current_user)],
-    session_service: Annotated[SessionService, Depends(get_session_service)],
-    refresh_token: Annotated[str, Cookie()],
-):
-    sessions = await session_service.get_sessions(
-        user_id=current_user.id, refresh_token=refresh_token
-    )
-
-    if not sessions:
-        raise InvalidTokenError("Invalid or expired refresh token")
-
-    return sessions[0]
-
-
-@router.get(
-    "/sessions", response_model=list[SessionResponse], status_code=status.HTTP_200_OK
-)
-async def get_all_sessions(
-    current_user: Annotated[User, Depends(get_current_user)],
-    session_service: Annotated[SessionService, Depends(get_session_service)],
-):
-    return await session_service.get_sessions(
-        user_id=current_user.id, refresh_token=None
-    )
-
-
-@router.post("/verify-email/send", status_code=status.HTTP_202_ACCEPTED)
-async def verify_email_send(
-    current_user: Annotated[User, Depends(get_current_user)],
-    action_token_service: Annotated[
-        ActionTokenService, Depends(get_action_token_service)
-    ],
-    background_tasks: BackgroundTasks,
-) -> None:
-    if current_user.is_verified:
-        raise EmailAlreadyVerifiedError("Email is already verified")
-
-    raw_token = await action_token_service.create(
-        token_type=TokenType.email_verification, user=current_user
-    )
-
-    background_tasks.add_task(
-        send_verification_email,
-        action_token_service,
-        current_user.email,
-        raw_token,
-    )
-
-
-@router.post("/verify-email", status_code=status.HTTP_204_NO_CONTENT)
-async def verify_email(
-    action_token_service: Annotated[
-        ActionTokenService, Depends(get_action_token_service)
-    ],
-    pool: Annotated[AsyncConnectionPool, Depends(get_db_pool)],
-    user_service: Annotated[UserService, Depends(get_user_service)],
-    token: str,
-) -> None:
-    async with pool.connection() as conn:
-        user_id = await action_token_service.consume(
-            token=token,
-            token_type=TokenType.email_verification,
-            db_conn=conn,
-        )
-
-        await user_service.verify_email(db_conn=conn, user_id=user_id)
-
-
-@router.post("/forgot-password")
-async def forgot_password(
-    email: Annotated[EmailStr, Body()],
-    user_service: Annotated[UserService, Depends(get_user_service)],
-    action_token_service: Annotated[
-        ActionTokenService, Depends(get_action_token_service)
-    ],
-    background_tasks: BackgroundTasks,
-) -> None:
-
-    user = await user_service.get_by_email(email)
-
-    raw_token = await action_token_service.create(
-        token_type=TokenType.password_reset, user=user
-    )
-
-    background_tasks.add_task(
-        send_forgot_password_email,
-        action_token_service,
-        user.email,
-        raw_token,
-    )
-
-
-@router.post("/reset-password")
-async def reset_password(
-    password: Annotated[str, Body()],
-    action_token_service: Annotated[
-        ActionTokenService, Depends(get_action_token_service)
-    ],
-    pool: Annotated[AsyncConnectionPool, Depends(get_db_pool)],
-    user_service: Annotated[UserService, Depends(get_user_service)],
-    token: str,
-) -> None:
-    async with pool.connection() as conn:
-        user_id = await action_token_service.consume(
-            token=token,
-            token_type=TokenType.password_reset,
-            db_conn=conn,
-        )
-
-        await user_service.update_password(
-            user_id=user_id,
-            db_conn=conn,
-            password=password,
-        )
