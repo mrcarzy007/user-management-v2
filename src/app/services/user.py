@@ -21,6 +21,19 @@ class UserService:
 
         return user
 
+    async def update_password(
+        self, user_id: int, password: str, db_conn: AsyncConnection | None = None
+    ):
+        hashed_password = hash_password(password)
+
+        user = await self.user_repo.update_user(
+            user_id=user_id,
+            hashed_password=hashed_password,
+            db_conn=db_conn,
+        )
+
+        return user
+
     async def get_by_email(self, email: str, db_conn: AsyncConnection | None = None):
         return await self.user_repo.get_by_email(email, db_conn=db_conn)
 

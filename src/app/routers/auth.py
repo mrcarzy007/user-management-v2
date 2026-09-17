@@ -4,6 +4,7 @@ from typing import Annotated
 from fastapi import (
     APIRouter,
     BackgroundTasks,
+    Body,
     Cookie,
     Depends,
     HTTPException,
@@ -12,13 +13,10 @@ from fastapi import (
 )
 from fastapi.responses import Response
 from psycopg_pool import AsyncConnectionPool
+from pydantic import EmailStr
 
-from app.core.email import send_email_in_thread
-from app.core.exceptions import (
-    EmailAlreadyVerifiedError,
-    InvalidTokenError,
-    TokenCooldownError,
-)
+from app.background_tasks import send_forgot_password_email, send_verification_email
+from app.core.exceptions import EmailAlreadyVerifiedError, InvalidTokenError
 from app.core.security import create_access_token, verify_password
 from app.core.settings import settings
 from app.dependencies import (
@@ -43,31 +41,6 @@ router = APIRouter(
 
 ACCESS_TOKEN_COOKIE_NAME = "access_token"
 REFRESH_TOKEN_COOKIE_NAME = "refresh_token"
-
-
-async def send_verification_email(
-    action_token_service: ActionTokenService,
-    email: str,
-    raw_token: str,
-) -> None:
-    try:
-        await send_email_in_thread(
-            to=[email],
-            subject=f"Verify Your Email —— {settings.APP_NAME}",
-            text=f"""
-            Hello,
-
-            Please click below link to verify your email.
-            {settings.BASE_URL.rstrip("/")}/auth/verify-email?token={raw_token}
-
-            If you did not request this verification, please ignore this email.
-            """,
-        )
-
-    except Exception:  # noqa: BLE001
-        await action_token_service.revoke(
-            token_type=TokenType.email_verification, token=raw_token
-        )
 
 
 def set_access_token_cookie(res: Response, access_token: str):
@@ -273,7 +246,6 @@ async def get_all_sessions(
 @router.post("/verify-email/send", status_code=status.HTTP_202_ACCEPTED)
 async def verify_email_send(
     current_user: Annotated[User, Depends(get_current_user)],
-    pool: Annotated[AsyncConnectionPool, Depends(get_db_pool)],
     action_token_service: Annotated[
         ActionTokenService, Depends(get_action_token_service)
     ],
@@ -282,37 +254,9 @@ async def verify_email_send(
     if current_user.is_verified:
         raise EmailAlreadyVerifiedError("Email is already verified")
 
-    async with pool.connection() as conn:
-        await action_token_service.lock_user(user_id=current_user.id, db_conn=conn)
-
-        latest_token = await action_token_service.get_latest_token(
-            user_id=current_user.id,
-            token_type=TokenType.email_verification,
-            db_conn=conn,
-        )
-
-        if latest_token is not None:
-            created_at = latest_token.created_at
-            if created_at.tzinfo is None:
-                created_at = created_at.replace(tzinfo=UTC)
-            elapsed = (datetime.now(tz=UTC) - created_at).total_seconds()
-            if elapsed < settings.ACTION_TOKEN_COOLDOWN_SECONDS:
-                remaining = int(settings.ACTION_TOKEN_COOLDOWN_SECONDS - elapsed)
-                raise TokenCooldownError(
-                    f"Please wait {remaining} seconds before requesting a new verification email."
-                )
-
-        await action_token_service.revoke_all_by_user(
-            user_id=current_user.id,
-            token_type=TokenType.email_verification,
-            db_conn=conn,
-        )
-
-        raw_token = await action_token_service.create(
-            token_type=TokenType.email_verification,
-            user_id=current_user.id,
-            db_conn=conn,
-        )
+    raw_token = await action_token_service.create(
+        token_type=TokenType.email_verification, user=current_user
+    )
 
     background_tasks.add_task(
         send_verification_email,
@@ -342,8 +286,48 @@ async def verify_email(
 
 
 @router.post("/forgot-password")
-async def forgot_password(): ...
+async def forgot_password(
+    email: Annotated[EmailStr, Body()],
+    user_service: Annotated[UserService, Depends(get_user_service)],
+    action_token_service: Annotated[
+        ActionTokenService, Depends(get_action_token_service)
+    ],
+    background_tasks: BackgroundTasks,
+) -> None:
+
+    user = await user_service.get_by_email(email)
+
+    raw_token = await action_token_service.create(
+        token_type=TokenType.password_reset, user=user
+    )
+
+    background_tasks.add_task(
+        send_forgot_password_email,
+        action_token_service,
+        user.email,
+        raw_token,
+    )
 
 
 @router.post("/reset-password")
-async def reset_password(): ...
+async def reset_password(
+    password: Annotated[str, Body()],
+    action_token_service: Annotated[
+        ActionTokenService, Depends(get_action_token_service)
+    ],
+    pool: Annotated[AsyncConnectionPool, Depends(get_db_pool)],
+    user_service: Annotated[UserService, Depends(get_user_service)],
+    token: str,
+) -> None:
+    async with pool.connection() as conn:
+        user_id = await action_token_service.consume(
+            token=token,
+            token_type=TokenType.password_reset,
+            db_conn=conn,
+        )
+
+        await user_service.update_password(
+            user_id=user_id,
+            db_conn=conn,
+            password=password,
+        )
