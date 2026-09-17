@@ -1,9 +1,10 @@
 from datetime import datetime
 
-from psycopg import sql
+from psycopg import AsyncConnection, sql
 from psycopg.rows import class_row
 from psycopg_pool import AsyncConnectionPool
 
+from app.core.db import get_db_conn
 from app.core.exceptions import InvalidTokenError, RecordNotFoundError
 from app.models.session import Session
 
@@ -20,10 +21,11 @@ class SessionRepository:
         name: str | None,
         device_info: str | None,
         ip_address: str | None,
+        db_conn: AsyncConnection | None = None,
     ):
 
         async with (
-            self.pool.connection() as conn,
+            get_db_conn(self.pool, db_conn) as conn,
             conn.cursor(row_factory=class_row(Session)) as cur,
         ):
             await cur.execute(
@@ -94,9 +96,14 @@ class SessionRepository:
 
             return sessions
 
-    async def delete_session(self, user_id: int, token_hash: str) -> None:
+    async def delete_session(
+        self,
+        user_id: int,
+        token_hash: str,
+        db_conn: AsyncConnection | None = None,
+    ) -> None:
         async with (
-            self.pool.connection() as conn,
+            get_db_conn(self.pool, db_conn) as conn,
             conn.cursor(row_factory=class_row(Session)) as cur,
         ):
             await cur.execute(

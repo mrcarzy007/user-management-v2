@@ -6,8 +6,10 @@ from psycopg_pool import AsyncConnectionPool
 
 from app.core.exceptions import (
     DuplicateRecordError,
+    EmailAlreadyVerifiedError,
     InvalidTokenError,
     RecordNotFoundError,
+    TokenCooldownError,
 )
 from app.core.settings import settings
 from app.routers import router as all_routers
@@ -54,5 +56,23 @@ async def duplicate_record_exception_handler(
 ):
     return JSONResponse(
         status_code=status.HTTP_409_CONFLICT,
+        content={"detail": exc.message},
+    )
+
+
+@app.exception_handler(EmailAlreadyVerifiedError)
+async def email_already_verified_exception_handler(
+    request: Request, exc: EmailAlreadyVerifiedError
+):
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={"detail": exc.message},
+    )
+
+
+@app.exception_handler(TokenCooldownError)
+async def token_cooldown_exception_handler(request: Request, exc: TokenCooldownError):
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         content={"detail": exc.message},
     )

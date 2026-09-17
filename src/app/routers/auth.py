@@ -1,16 +1,30 @@
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Cookie,
+    Depends,
+    HTTPException,
+    Request,
+    status,
+)
 from fastapi.responses import Response
+from psycopg_pool import AsyncConnectionPool
 
-from app.core.email import send_email
-from app.core.exceptions import InvalidTokenError
+from app.core.email import send_email_in_thread
+from app.core.exceptions import (
+    EmailAlreadyVerifiedError,
+    InvalidTokenError,
+    TokenCooldownError,
+)
 from app.core.security import create_access_token, verify_password
 from app.core.settings import settings
 from app.dependencies import (
     get_action_token_service,
     get_current_user,
+    get_db_pool,
     get_session_service,
     get_user_service,
 )
@@ -29,6 +43,31 @@ router = APIRouter(
 
 ACCESS_TOKEN_COOKIE_NAME = "access_token"
 REFRESH_TOKEN_COOKIE_NAME = "refresh_token"
+
+
+async def send_verification_email(
+    action_token_service: ActionTokenService,
+    email: str,
+    raw_token: str,
+) -> None:
+    try:
+        await send_email_in_thread(
+            to=[email],
+            subject=f"Verify Your Email —— {settings.APP_NAME}",
+            text=f"""
+            Hello,
+
+            Please click below link to verify your email.
+            {settings.BASE_URL.rstrip("/")}/auth/verify-email?token={raw_token}
+
+            If you did not request this verification, please ignore this email.
+            """,
+        )
+
+    except Exception:  # noqa: BLE001
+        await action_token_service.revoke(
+            token_type=TokenType.email_verification, token=raw_token
+        )
 
 
 def set_access_token_cookie(res: Response, access_token: str):
@@ -66,18 +105,23 @@ def set_refresh_token_cookie(
 async def register(
     res: Response,
     data: AuthRegister,
+    pool: Annotated[AsyncConnectionPool, Depends(get_db_pool)],
     user_service: Annotated[UserService, Depends(get_user_service)],
     session_service: Annotated[SessionService, Depends(get_session_service)],
     request: Request,
 ) -> None:
 
-    user = await user_service.create(email=data.email, password=data.password)
+    async with pool.connection() as conn:
+        user = await user_service.create(
+            db_conn=conn, email=data.email, password=data.password
+        )
 
-    raw_refresh_token, session = await session_service.create(
-        name=None,
-        user_id=user.id,
-        request=request,
-    )
+        raw_refresh_token, session = await session_service.create(
+            db_conn=conn,
+            name=None,
+            user_id=user.id,
+            request=request,
+        )
 
     set_refresh_token_cookie(
         res=res,
@@ -94,32 +138,34 @@ async def register(
 async def token(
     res: Response,
     data: AuthToken,
+    pool: Annotated[AsyncConnectionPool, Depends(get_db_pool)],
     user_service: Annotated[UserService, Depends(get_user_service)],
     session_service: Annotated[SessionService, Depends(get_session_service)],
     request: Request,
     refresh_token: Annotated[str | None, Cookie()] = None,
 ) -> None:
 
-    user = await user_service.get_by_email(email=data.email)
+    async with pool.connection() as conn:
+        user = await user_service.get_by_email(email=data.email, db_conn=conn)
 
-    if not verify_password(
-        plain_password=data.password,
-        hashed_password=user.hashed_password,
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Credentials",
-            headers={"WWW-Authenticate": "Bearer"},
+        if not verify_password(
+            plain_password=data.password,
+            hashed_password=user.hashed_password,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid Credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        raw_refresh_token, session = await session_service.create(
+            name=None, user_id=user.id, request=request, db_conn=conn
         )
 
-    raw_refresh_token, session = await session_service.create(
-        name=None,
-        user_id=user.id,
-        request=request,
-    )
-
-    if refresh_token is not None:
-        await session_service.logout(user_id=user.id, refresh_token=refresh_token)
+        if refresh_token is not None:
+            await session_service.logout(
+                user_id=user.id, refresh_token=refresh_token, db_conn=conn
+            )
 
     set_refresh_token_cookie(
         res=res,
@@ -224,41 +270,75 @@ async def get_all_sessions(
     )
 
 
-@router.post("/verify-email/send", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/verify-email/send", status_code=status.HTTP_202_ACCEPTED)
 async def verify_email_send(
     current_user: Annotated[User, Depends(get_current_user)],
+    pool: Annotated[AsyncConnectionPool, Depends(get_db_pool)],
     action_token_service: Annotated[
         ActionTokenService, Depends(get_action_token_service)
     ],
+    background_tasks: BackgroundTasks,
 ) -> None:
-    raw_token = await action_token_service.create(
-        token_type=TokenType.email_verification, user_id=current_user.id
-    )
+    if current_user.is_verified:
+        raise EmailAlreadyVerifiedError("Email is already verified")
 
-    verification_url = f"{settings.BASE_URL.rstrip('/')}/verify-email?token={raw_token}"
+    async with pool.connection() as conn:
+        await action_token_service.lock_user(user_id=current_user.id, db_conn=conn)
 
-    await send_email(
-        to=current_user.email,
-        subject=f"Verify Your Email —— {settings.APP_NAME}",
-        text=f"""
-        Hello,
-        Please click below link to verify your email.
-        {verification_url}
-        """,
+        latest_token = await action_token_service.get_latest_token(
+            user_id=current_user.id,
+            token_type=TokenType.email_verification,
+            db_conn=conn,
+        )
+
+        if latest_token is not None:
+            created_at = latest_token.created_at
+            if created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=UTC)
+            elapsed = (datetime.now(tz=UTC) - created_at).total_seconds()
+            if elapsed < settings.ACTION_TOKEN_COOLDOWN_SECONDS:
+                remaining = int(settings.ACTION_TOKEN_COOLDOWN_SECONDS - elapsed)
+                raise TokenCooldownError(
+                    f"Please wait {remaining} seconds before requesting a new verification email."
+                )
+
+        await action_token_service.revoke_all_by_user(
+            user_id=current_user.id,
+            token_type=TokenType.email_verification,
+            db_conn=conn,
+        )
+
+        raw_token = await action_token_service.create(
+            token_type=TokenType.email_verification,
+            user_id=current_user.id,
+            db_conn=conn,
+        )
+
+    background_tasks.add_task(
+        send_verification_email,
+        action_token_service,
+        current_user.email,
+        raw_token,
     )
 
 
 @router.post("/verify-email", status_code=status.HTTP_204_NO_CONTENT)
 async def verify_email(
-    token: str,
     action_token_service: Annotated[
         ActionTokenService, Depends(get_action_token_service)
     ],
+    pool: Annotated[AsyncConnectionPool, Depends(get_db_pool)],
+    user_service: Annotated[UserService, Depends(get_user_service)],
+    token: str,
 ) -> None:
-    await action_token_service.verify(
-        token=token,
-        token_type=TokenType.email_verification,
-    )
+    async with pool.connection() as conn:
+        user_id = await action_token_service.consume(
+            token=token,
+            token_type=TokenType.email_verification,
+            db_conn=conn,
+        )
+
+        await user_service.verify_email(db_conn=conn, user_id=user_id)
 
 
 @router.post("/forgot-password")

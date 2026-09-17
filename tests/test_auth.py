@@ -1,3 +1,5 @@
+from datetime import UTC, datetime, timedelta
+
 import pytest
 from httpx import AsyncClient, Response
 
@@ -136,6 +138,41 @@ async def test_get_me_returns_public_user_fields(client: AsyncClient):
     assert "hashed_password" not in response.json()
 
 
+def extract_verification_token(email_text: str) -> str:
+    return email_text.split("token=")[1].split()[0]
+
+
+async def test_verify_email_is_single_use(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    access_token, refresh_token = await register(client)
+    use_tokens(client, access_token, refresh_token)
+
+    sent_emails = []
+
+    async def record_email(**kwargs):
+        sent_emails.append((kwargs["to"], kwargs["subject"], kwargs["text"]))
+
+    monkeypatch.setattr("app.routers.auth.send_email_in_thread", record_email)
+
+    response = await client.post("/auth/verify-email/send")
+    assert response.status_code == 202
+    assert len(sent_emails) == 1
+    raw_token = extract_verification_token(sent_emails[0][2])
+
+    replay = await client.post("/auth/verify-email", params={"token": raw_token})
+    assert replay.status_code == 204
+
+    user = await client.get("/auth")
+    assert user.json()["is_verified"] is True
+
+    second_attempt = await client.post(
+        "/auth/verify-email", params={"token": raw_token}
+    )
+    assert second_attempt.status_code == 401
+    assert second_attempt.json() == {"detail": "Invalid or expired action token"}
+
+
 async def test_protected_routes_reject_missing_and_invalid_access_tokens(
     client: AsyncClient,
 ):
@@ -224,3 +261,154 @@ async def test_logout_all_revokes_every_session(client: AsyncClient):
     assert (await client.get("/auth/refresh")).status_code == 401
     use_tokens(client, None, second_refresh_token)
     assert (await client.get("/auth/refresh")).status_code == 401
+
+
+async def test_verify_email_with_query_token(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    access_token, refresh_token = await register(client)
+    use_tokens(client, access_token, refresh_token)
+
+    sent_emails = []
+
+    async def record_email(**kwargs):
+        sent_emails.append((kwargs["to"], kwargs["subject"], kwargs["text"]))
+
+    monkeypatch.setattr("app.routers.auth.send_email_in_thread", record_email)
+
+    response = await client.post("/auth/verify-email/send")
+    assert response.status_code == 202
+    assert len(sent_emails) == 1
+    raw_token = extract_verification_token(sent_emails[0][2])
+
+    verify = await client.post("/auth/verify-email", params={"token": raw_token})
+    assert verify.status_code == 204
+
+    user = await client.get("/auth")
+    assert user.json()["is_verified"] is True
+
+    replay = await client.post("/auth/verify-email", params={"token": raw_token})
+    assert replay.status_code == 401
+    assert replay.json() == {"detail": "Invalid or expired action token"}
+
+
+async def test_verify_email_rejects_missing_token(client: AsyncClient):
+    response = await client.post("/auth/verify-email")
+    assert response.status_code == 422
+
+
+async def test_verify_email_send_success_and_cooldown(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    access_token, refresh_token = await register(client)
+    use_tokens(client, access_token, refresh_token)
+
+    sent_emails = []
+
+    async def record_email(**kwargs):
+        sent_emails.append((kwargs["to"], kwargs["subject"], kwargs["text"]))
+
+    monkeypatch.setattr("app.routers.auth.send_email_in_thread", record_email)
+
+    response = await client.post("/auth/verify-email/send")
+    assert response.status_code == 202
+    assert len(sent_emails) == 1
+
+    resend = await client.post("/auth/verify-email/send")
+    assert resend.status_code == 429
+    assert "Please wait" in resend.json()["detail"]
+
+
+async def test_verify_email_send_rejects_already_verified_user(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    access_token, refresh_token = await register(client)
+    use_tokens(client, access_token, refresh_token)
+
+    sent_emails = []
+
+    async def record_email(**kwargs):
+        sent_emails.append((kwargs["to"], kwargs["subject"], kwargs["text"]))
+
+    monkeypatch.setattr("app.routers.auth.send_email_in_thread", record_email)
+
+    send = await client.post("/auth/verify-email/send")
+    assert send.status_code == 202
+    token = extract_verification_token(sent_emails[0][2])
+
+    verify = await client.post("/auth/verify-email", params={"token": token})
+    assert verify.status_code == 204
+
+    response = await client.post("/auth/verify-email/send")
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Email is already verified"}
+
+
+async def test_verify_email_send_revokes_token_when_email_fails(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    access_token, refresh_token = await register(client)
+    use_tokens(client, access_token, refresh_token)
+
+    async def fail_to_send(**kwargs):
+        raise RuntimeError("email provider unavailable")
+
+    monkeypatch.setattr("app.routers.auth.send_email_in_thread", fail_to_send)
+
+    first = await client.post("/auth/verify-email/send")
+    assert first.status_code == 202
+
+    sent_emails = []
+
+    async def record_email(**kwargs):
+        sent_emails.append((kwargs["to"], kwargs["subject"], kwargs["text"]))
+
+    monkeypatch.setattr("app.routers.auth.send_email_in_thread", record_email)
+    second = await client.post("/auth/verify-email/send")
+    assert second.status_code == 202
+    assert len(sent_emails) == 1
+
+
+async def test_verify_email_send_revokes_previous_token(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    access_token, refresh_token = await register(client)
+    use_tokens(client, access_token, refresh_token)
+
+    sent_emails = []
+
+    async def record_email(**kwargs):
+        sent_emails.append((kwargs["to"], kwargs["subject"], kwargs["text"]))
+
+    monkeypatch.setattr("app.routers.auth.send_email_in_thread", record_email)
+
+    response1 = await client.post("/auth/verify-email/send")
+    assert response1.status_code == 202
+    assert len(sent_emails) == 1
+    token1 = extract_verification_token(sent_emails[0][2])
+
+    class FutureDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            base = datetime.now(tz=UTC) + timedelta(minutes=3)
+            if tz is not None:
+                return base.astimezone(tz)
+            return base.replace(tzinfo=None)
+
+    monkeypatch.setattr("app.routers.auth.datetime", FutureDatetime)
+
+    response2 = await client.post("/auth/verify-email/send")
+    assert response2.status_code == 202
+    assert len(sent_emails) == 2
+    token2 = extract_verification_token(sent_emails[1][2])
+    assert token1 != token2
+
+    verify_first = await client.post("/auth/verify-email", params={"token": token1})
+    assert verify_first.status_code == 401
+    assert verify_first.json() == {"detail": "Invalid or expired action token"}
+
+    verify_second = await client.post("/auth/verify-email", params={"token": token2})
+    assert verify_second.status_code == 204
+
+    user = await client.get("/auth")
+    assert user.json()["is_verified"] is True

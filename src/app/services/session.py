@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from fastapi import Request
+from psycopg import AsyncConnection
 
 from app.core.security import compute_token_hash, generate_refresh_token
 from app.core.settings import settings
@@ -27,7 +28,13 @@ class SessionService:
     def __init__(self, session_repo: SessionRepository):
         self.session_repo = session_repo
 
-    async def create(self, name: str | None, user_id: int, request: Request):
+    async def create(
+        self,
+        name: str | None,
+        user_id: int,
+        request: Request,
+        db_conn: AsyncConnection | None = None,
+    ):
 
         raw_refresh_token, refresh_token_hash = generate_refresh_token()
 
@@ -44,6 +51,7 @@ class SessionService:
             ip_address=ip_address,
             expires_at=expires_at,
             token_hash=refresh_token_hash,
+            db_conn=db_conn,
         )
 
         return raw_refresh_token, session
@@ -64,10 +72,17 @@ class SessionService:
             new_expires_at=new_expires_at,
         )
 
-    async def logout(self, user_id: int, refresh_token: str) -> None:
+    async def logout(
+        self,
+        user_id: int,
+        refresh_token: str,
+        db_conn: AsyncConnection | None = None,
+    ) -> None:
         token_hash = compute_token_hash(refresh_token)
 
-        return await self.session_repo.delete_session(user_id, token_hash=token_hash)
+        return await self.session_repo.delete_session(
+            user_id, token_hash=token_hash, db_conn=db_conn
+        )
 
     async def logout_all(self, user_id: int) -> None:
         return await self.session_repo.delete_all_sessions(user_id)

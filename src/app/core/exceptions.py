@@ -19,3 +19,11 @@ class RecordNotFoundError(DomainError):
 
 class DuplicateRecordError(DomainError):
     """Raised when a duplicate resource is inserted in PostgreSQL."""
+
+
+class EmailAlreadyVerifiedError(DomainError):
+    """Raised when an email verification is requested for an already verified user."""
+
+
+class TokenCooldownError(DomainError):
+    """Raised when an action token is requested before the cooldown period has elapsed."""

@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     ACTION_TOKEN_EXPIRE_MINUTES: int
     JWT_SECRET_KEY: str
     JWT_ALGORITHM: str
+    MAILTRAP_API_TOKEN: str
+    NO_REPLY_EMAIL: str
+    ACTION_TOKEN_COOLDOWN_SECONDS: int
 
 
 settings = Settings()  # pyright: ignore[reportCallIssue]
