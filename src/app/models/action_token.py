@@ -6,6 +6,8 @@ from typing import Any
 
 class TokenType(StrEnum):
     email_verification = "email_verification"
+    password_reset = "password_reset"
+    email_change = "email_change"
 
 
 @dataclass

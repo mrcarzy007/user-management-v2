@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
+from psycopg.errors import SyntaxError
 from psycopg_pool import AsyncConnectionPool
 
 from app.core.exceptions import (
@@ -75,4 +76,13 @@ async def token_cooldown_exception_handler(request: Request, exc: TokenCooldownE
     return JSONResponse(
         status_code=status.HTTP_429_TOO_MANY_REQUESTS,
         content={"detail": exc.message},
+    )
+
+
+@app.exception_handler(RuntimeError)
+@app.exception_handler(SyntaxError)
+async def postgres_syntax_exception_handler(request: Request, exc: SyntaxError):
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal server error"},
     )
