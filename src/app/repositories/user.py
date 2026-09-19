@@ -79,6 +79,21 @@ class UserRepository:
 
             return updated_user
 
+    async def delete(self, user_id: int, db_conn: AsyncConnection | None = None) -> None:
+        async with (
+            get_db_conn(self.pool, db_conn) as conn,
+            conn.cursor() as cur,
+        ):
+            await cur.execute(
+                t"""
+                DELETE FROM users
+                WHERE id = {user_id}
+                """
+            )
+
+            if cur.rowcount <= 0:
+                raise RecordNotFoundError("User not found")
+
     async def get_by_email(
         self, email: str, db_conn: AsyncConnection | None = None
     ) -> User:

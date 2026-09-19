@@ -1,6 +1,7 @@
 from psycopg import AsyncConnection
 
-from app.core.security import hash_password
+from app.core.exceptions import InvalidCredentialsError
+from app.core.security import hash_password, verify_password
 from app.repositories.user import UserRepository
 
 
@@ -45,6 +46,25 @@ class UserService:
         )
 
         return user
+
+    async def change_password(
+        self,
+        user_id: int,
+        current_password: str,
+        new_password: str,
+        db_conn: AsyncConnection | None = None,
+    ):
+        user = await self.user_repo.get_by_id(user_id, db_conn=db_conn)
+
+        if not verify_password(current_password, user.hashed_password):
+            raise InvalidCredentialsError("Invalid Credentials")
+
+        return await self.update_password(
+            user_id=user_id, password=new_password, db_conn=db_conn
+        )
+
+    async def delete(self, user_id: int, db_conn: AsyncConnection | None = None):
+        return await self.user_repo.delete(user_id=user_id, db_conn=db_conn)
 
     async def get_by_email(self, email: str, db_conn: AsyncConnection | None = None):
         return await self.user_repo.get_by_email(email, db_conn=db_conn)

@@ -2,12 +2,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
+from psycopg import Error as PsycopgError
 from psycopg.errors import SyntaxError
 from psycopg_pool import AsyncConnectionPool
 
 from app.core.exceptions import (
     DuplicateRecordError,
     EmailAlreadyVerifiedError,
+    InvalidCredentialsError,
     InvalidTokenError,
     RecordNotFoundError,
     TokenCooldownError,
@@ -30,6 +32,7 @@ app = FastAPI(lifespan=lifespan, title=settings.APP_NAME)
 app.include_router(all_routers)
 
 
+@app.exception_handler(InvalidCredentialsError)
 @app.exception_handler(InvalidTokenError)
 async def invalid_token_exception_handler(request: Request, exc: InvalidTokenError):
     """Maps domain token errors to HTTP 401 Unauthorized responses."""
@@ -80,8 +83,9 @@ async def token_cooldown_exception_handler(request: Request, exc: TokenCooldownE
 
 
 @app.exception_handler(RuntimeError)
+@app.exception_handler(PsycopgError)
 @app.exception_handler(SyntaxError)
-async def postgres_syntax_exception_handler(request: Request, exc: SyntaxError):
+async def internal_server_error_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"detail": "Internal server error"},

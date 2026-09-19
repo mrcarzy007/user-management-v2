@@ -27,6 +27,13 @@ ACCESS_TOKEN_COOKIE_NAME = "access_token"
 REFRESH_TOKEN_COOKIE_NAME = "refresh_token"
 
 
+@router.get("/me", response_model=UserResponse)
+async def get_me(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    return current_user
+
+
 def set_access_token_cookie(res: Response, access_token: str):
     max_age = settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60  # 60 seconds * minutes
 
@@ -37,6 +44,7 @@ def set_access_token_cookie(res: Response, access_token: str):
         secure=True,
         httponly=True,
         samesite="strict",
+        path="/",
     )
 
 
@@ -55,6 +63,7 @@ def set_refresh_token_cookie(
         secure=True,
         httponly=True,
         samesite="strict",
+        path="/",
     )
 
 

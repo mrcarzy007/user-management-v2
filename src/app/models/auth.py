@@ -9,3 +9,8 @@ class AuthRegister(BaseModel):
 class AuthToken(BaseModel):
     email: EmailStr
     password: str
+
+
+class PasswordChange(BaseModel):
+    current_password: str
+    new_password: str

@@ -21,6 +21,10 @@ class DuplicateRecordError(DomainError):
     """Raised when a duplicate resource is inserted in PostgreSQL."""
 
 
+class InvalidCredentialsError(DomainError):
+    """Raised when supplied credentials do not match the user."""
+
+
 class EmailAlreadyVerifiedError(DomainError):
     """Raised when an email verification is requested for an already verified user."""
 

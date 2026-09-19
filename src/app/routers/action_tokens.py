@@ -152,12 +152,12 @@ async def change_email(
 
 @router.patch("/verify-new-email")
 async def verify_new_email(
+    token: str,
+    pool: Annotated[AsyncConnectionPool, Depends(get_db_pool)],
+    user_service: Annotated[UserService, Depends(get_user_service)],
     action_token_service: Annotated[
         ActionTokenService, Depends(get_action_token_service)
     ],
-    pool: Annotated[AsyncConnectionPool, Depends(get_db_pool)],
-    user_service: Annotated[UserService, Depends(get_user_service)],
-    token: str,
 ) -> None:
     async with pool.connection() as conn:
         action_token = await action_token_service.consume(
@@ -173,4 +173,9 @@ async def verify_new_email(
             user_id=action_token.user_id,
             db_conn=conn,
             email=action_token.payload.email,
+        )
+
+        await user_service.verify_email(
+            user_id=action_token.user_id,
+            db_conn=conn,
         )

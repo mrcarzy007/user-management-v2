@@ -31,6 +31,7 @@ def set_access_token_cookie(res: Response, access_token: str):
         secure=True,
         httponly=True,
         samesite="strict",
+        path="/",
     )
 
 
@@ -49,6 +50,7 @@ def set_refresh_token_cookie(
         secure=True,
         httponly=True,
         samesite="strict",
+        path="/",
     )
 
 
@@ -84,10 +86,18 @@ async def logout(
     await session_service.logout(user_id=current_user.id, refresh_token=refresh_token)
 
     res.delete_cookie(
-        ACCESS_TOKEN_COOKIE_NAME, secure=True, httponly=True, samesite="strict"
+        ACCESS_TOKEN_COOKIE_NAME,
+        secure=True,
+        httponly=True,
+        samesite="strict",
+        path="/",
     )
     res.delete_cookie(
-        REFRESH_TOKEN_COOKIE_NAME, secure=True, httponly=True, samesite="strict"
+        REFRESH_TOKEN_COOKIE_NAME,
+        secure=True,
+        httponly=True,
+        samesite="strict",
+        path="/",
     )
 
 
@@ -100,10 +110,18 @@ async def logout_all(
     await session_service.logout_all(user_id=current_user.id)
 
     res.delete_cookie(
-        ACCESS_TOKEN_COOKIE_NAME, secure=True, httponly=True, samesite="strict"
+        ACCESS_TOKEN_COOKIE_NAME,
+        secure=True,
+        httponly=True,
+        samesite="strict",
+        path="/",
     )
     res.delete_cookie(
-        REFRESH_TOKEN_COOKIE_NAME, secure=True, httponly=True, samesite="strict"
+        REFRESH_TOKEN_COOKIE_NAME,
+        secure=True,
+        httponly=True,
+        samesite="strict",
+        path="/",
     )
 
 

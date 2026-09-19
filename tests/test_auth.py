@@ -104,7 +104,7 @@ async def test_refresh_rotates_token_and_rejects_replay(client: AsyncClient):
     access_token, refresh_token = await register(client)
     use_tokens(client, None, refresh_token)
 
-    response = await client.get("/auth/refresh")
+    response = await client.post("/auth/refresh")
 
     assert response.status_code == 204
     assert_auth_cookies(response)
@@ -112,17 +112,17 @@ async def test_refresh_rotates_token_and_rejects_replay(client: AsyncClient):
     assert response.cookies.get("refresh_token") != refresh_token
 
     use_tokens(client, None, refresh_token)
-    replay = await client.get("/auth/refresh")
+    replay = await client.post("/auth/refresh")
     assert replay.status_code == 401
     assert replay.json() == {"detail": "Invalid or expired refresh token"}
 
 
 async def test_refresh_requires_a_valid_cookie(client: AsyncClient):
-    missing = await client.get("/auth/refresh")
+    missing = await client.post("/auth/refresh")
     assert missing.status_code == 422
 
     client.cookies["refresh_token"] = "invalid"
-    invalid = await client.get("/auth/refresh")
+    invalid = await client.post("/auth/refresh")
     assert invalid.status_code == 401
     assert invalid.json() == {"detail": "Invalid or expired refresh token"}
 
@@ -136,6 +136,61 @@ async def test_get_me_returns_public_user_fields(client: AsyncClient):
     assert response.status_code == 200
     assert response.json()["email"] == USER["email"]
     assert "hashed_password" not in response.json()
+
+
+async def test_user_me_returns_public_user_fields(client: AsyncClient):
+    access_token, refresh_token = await register(client)
+    use_tokens(client, access_token, refresh_token)
+
+    response = await client.get("/users/me")
+
+    assert response.status_code == 200
+    assert response.json()["email"] == USER["email"]
+    assert "hashed_password" not in response.json()
+
+
+async def test_change_password_requires_current_password(client: AsyncClient):
+    access_token, refresh_token = await register(client)
+    use_tokens(client, access_token, refresh_token)
+
+    invalid = await client.patch(
+        "/users/me/password",
+        json={"current_password": "wrong", "new_password": "new-password"},
+    )
+    assert invalid.status_code == 401
+    assert invalid.json() == {"detail": "Invalid Credentials"}
+
+    changed = await client.patch(
+        "/users/me/password",
+        json={"current_password": USER["password"], "new_password": "new-password"},
+    )
+    assert changed.status_code == 204
+
+    old_password = await client.post(
+        "/auth/token", json={"email": USER["email"], "password": USER["password"]}
+    )
+    assert old_password.status_code == 401
+
+    new_password = await client.post(
+        "/auth/token", json={"email": USER["email"], "password": "new-password"}
+    )
+    assert new_password.status_code == 204
+
+
+async def test_delete_user_revokes_account_and_sessions(client: AsyncClient):
+    access_token, refresh_token = await register(client)
+    use_tokens(client, access_token, refresh_token)
+
+    response = await client.delete("/users/me")
+
+    assert response.status_code == 204
+    assert response.headers.get_list("set-cookie")
+
+    use_tokens(client, access_token, refresh_token)
+    assert (await client.get("/auth/me")).status_code == 404
+    refresh = await client.post("/auth/refresh")
+    assert refresh.status_code == 401
+    assert refresh.json() == {"detail": "Invalid or expired refresh token"}
 
 
 def extract_verification_token(email_text: str) -> str:
@@ -153,7 +208,7 @@ async def test_verify_email_is_single_use(
     async def record_email(**kwargs):
         sent_emails.append((kwargs["to"], kwargs["subject"], kwargs["text"]))
 
-    monkeypatch.setattr("app.routers.auth.send_email_in_thread", record_email)
+    monkeypatch.setattr("app.background_tasks.send_email", record_email)
 
     response = await client.post("/auth/verify-email/send")
     assert response.status_code == 202
@@ -235,15 +290,15 @@ async def test_logout_revokes_only_the_selected_session(client: AsyncClient):
     second_access_token = token_response.cookies.get("access_token")
     use_tokens(client, second_access_token, second_refresh_token)
 
-    response = await client.get("/auth/logout")
+    response = await client.post("/auth/logout")
 
     assert response.status_code == 204
     assert response.headers.get_list("set-cookie")
 
     use_tokens(client, None, refresh_token)
-    assert (await client.get("/auth/refresh")).status_code == 204
+    assert (await client.post("/auth/refresh")).status_code == 204
     use_tokens(client, None, second_refresh_token)
-    assert (await client.get("/auth/refresh")).status_code == 401
+    assert (await client.post("/auth/refresh")).status_code == 401
 
 
 async def test_logout_all_revokes_every_session(client: AsyncClient):
@@ -254,13 +309,13 @@ async def test_logout_all_revokes_every_session(client: AsyncClient):
     second_access_token = token_response.cookies.get("access_token")
     use_tokens(client, second_access_token, second_refresh_token)
 
-    response = await client.get("/auth/logout-all")
+    response = await client.post("/auth/logout-all")
 
     assert response.status_code == 204
     use_tokens(client, None, refresh_token)
-    assert (await client.get("/auth/refresh")).status_code == 401
+    assert (await client.post("/auth/refresh")).status_code == 401
     use_tokens(client, None, second_refresh_token)
-    assert (await client.get("/auth/refresh")).status_code == 401
+    assert (await client.post("/auth/refresh")).status_code == 401
 
 
 async def test_verify_email_with_query_token(
@@ -274,7 +329,7 @@ async def test_verify_email_with_query_token(
     async def record_email(**kwargs):
         sent_emails.append((kwargs["to"], kwargs["subject"], kwargs["text"]))
 
-    monkeypatch.setattr("app.routers.auth.send_email_in_thread", record_email)
+    monkeypatch.setattr("app.background_tasks.send_email", record_email)
 
     response = await client.post("/auth/verify-email/send")
     assert response.status_code == 202
@@ -308,7 +363,7 @@ async def test_verify_email_send_success_and_cooldown(
     async def record_email(**kwargs):
         sent_emails.append((kwargs["to"], kwargs["subject"], kwargs["text"]))
 
-    monkeypatch.setattr("app.routers.auth.send_email_in_thread", record_email)
+    monkeypatch.setattr("app.background_tasks.send_email", record_email)
 
     response = await client.post("/auth/verify-email/send")
     assert response.status_code == 202
@@ -330,7 +385,7 @@ async def test_verify_email_send_rejects_already_verified_user(
     async def record_email(**kwargs):
         sent_emails.append((kwargs["to"], kwargs["subject"], kwargs["text"]))
 
-    monkeypatch.setattr("app.routers.auth.send_email_in_thread", record_email)
+    monkeypatch.setattr("app.background_tasks.send_email", record_email)
 
     send = await client.post("/auth/verify-email/send")
     assert send.status_code == 202
@@ -353,7 +408,7 @@ async def test_verify_email_send_revokes_token_when_email_fails(
     async def fail_to_send(**kwargs):
         raise RuntimeError("email provider unavailable")
 
-    monkeypatch.setattr("app.routers.auth.send_email_in_thread", fail_to_send)
+    monkeypatch.setattr("app.background_tasks.send_email", fail_to_send)
 
     first = await client.post("/auth/verify-email/send")
     assert first.status_code == 202
@@ -363,7 +418,7 @@ async def test_verify_email_send_revokes_token_when_email_fails(
     async def record_email(**kwargs):
         sent_emails.append((kwargs["to"], kwargs["subject"], kwargs["text"]))
 
-    monkeypatch.setattr("app.routers.auth.send_email_in_thread", record_email)
+    monkeypatch.setattr("app.background_tasks.send_email", record_email)
     second = await client.post("/auth/verify-email/send")
     assert second.status_code == 202
     assert len(sent_emails) == 1
@@ -380,7 +435,7 @@ async def test_verify_email_send_revokes_previous_token(
     async def record_email(**kwargs):
         sent_emails.append((kwargs["to"], kwargs["subject"], kwargs["text"]))
 
-    monkeypatch.setattr("app.routers.auth.send_email_in_thread", record_email)
+    monkeypatch.setattr("app.background_tasks.send_email", record_email)
 
     response1 = await client.post("/auth/verify-email/send")
     assert response1.status_code == 202
@@ -395,7 +450,7 @@ async def test_verify_email_send_revokes_previous_token(
                 return base.astimezone(tz)
             return base.replace(tzinfo=None)
 
-    monkeypatch.setattr("app.routers.auth.datetime", FutureDatetime)
+    monkeypatch.setattr("app.services.action_token.datetime", FutureDatetime)
 
     response2 = await client.post("/auth/verify-email/send")
     assert response2.status_code == 202
